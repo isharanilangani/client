@@ -22,6 +22,20 @@ const Editor = ({ docId }) => {
   const socketRef = useRef();
   const quillRef = useRef();
   const [isReady, setIsReady] = useState(false);
+  const [onlineUsers, setOnlineUsers] = useState([]);
+
+  useEffect(() => {
+    socketRef.current = io('http://localhost:3001');
+  
+    socketRef.current.on("update-users", (users) => {
+      setOnlineUsers(users);
+    });
+  
+    return () => {
+      socketRef.current.disconnect();
+      socketRef.current.off("update-users");
+    };
+  }, []);
 
   useEffect(() => {
     socketRef.current = io('http://localhost:3001');
@@ -33,29 +47,35 @@ const Editor = ({ docId }) => {
 
   useEffect(() => {
     if (!socketRef.current || !wrapperRef.current) return;
-
+  
+    // 🧼 Clean up existing editor before creating a new one
+    wrapperRef.current.innerHTML = '';
+  
     const editorDiv = document.createElement('div');
     wrapperRef.current.append(editorDiv);
+  
     const quill = new Quill(editorDiv, {
       theme: 'snow',
       modules: { toolbar: TOOLBAR_OPTIONS },
     });
+  
     quill.disable();
     quill.setText("Loading...");
     quillRef.current = quill;
-
+  
     socketRef.current.once('load-document', (document) => {
       quill.setContents(document);
       quill.enable();
       setIsReady(true);
     });
-
-    socketRef.current.emit('join-document', docId);
-
+  
+    const username = localStorage.getItem('username') || 'Guest';
+    socketRef.current.emit("join-document", { docId, username });
+  
     return () => {
-        if (wrapperRef.current) {
-            wrapperRef.current.innerHTML = '';
-          }
+      if (wrapperRef.current) {
+        wrapperRef.current.innerHTML = '';
+      }
     };
   }, [docId]);
 
