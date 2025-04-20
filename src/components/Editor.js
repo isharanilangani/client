@@ -28,6 +28,8 @@ const Editor = ({ docId }) => {
     localStorage.getItem("role") || "viewer"
   );
 
+  const username = localStorage.getItem("username") || "Guest";
+
   useEffect(() => {
     socketRef.current = io("http://localhost:3001");
     const socket = socketRef.current;
@@ -105,6 +107,7 @@ const Editor = ({ docId }) => {
     };
   }, [docId, currentRole]);
 
+  // Emit typing + text change
   useEffect(() => {
     if (!quillRef.current || !socketRef.current || !isReady) return;
 
@@ -114,7 +117,7 @@ const Editor = ({ docId }) => {
     const changeHandler = (delta, oldDelta, source) => {
       if (source !== "user") return;
       socket.emit("send-changes", delta);
-      socket.emit("typing");
+      socket.emit("typing", username);
     };
 
     quill.on("text-change", changeHandler);
@@ -122,7 +125,7 @@ const Editor = ({ docId }) => {
     return () => {
       quill.off("text-change", changeHandler);
     };
-  }, [isReady]);
+  }, [isReady, username]);
 
   useEffect(() => {
     if (!socketRef.current || !quillRef.current) return;
