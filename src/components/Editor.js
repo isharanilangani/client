@@ -152,6 +152,21 @@ const Editor = ({ docId }) => {
     return () => clearInterval(interval);
   }, [docId]);
 
+  const handleUndo = async () => {
+    try {
+      const response = await fetch(`http://localhost:3001/undo/${docId}`, {
+        method: "GET",
+      });
+      const { delta } = await response.json();
+      if (delta && quillRef.current) {
+        quillRef.current.setContents(delta);
+        socketRef.current.emit("send-changes", delta);
+      }
+    } catch (error) {
+      console.error("Undo failed:", error);
+    }
+  };  
+
   const handleRoleChange = (targetUsername, newRole) => {
     socketRef.current.emit("change-role", {
       docId,
@@ -182,6 +197,13 @@ const Editor = ({ docId }) => {
           </select>
         </div>
       </div>
+      <button
+        onClick={handleUndo}
+        className="bg-blue-500 text-white px-3 py-1 rounded mt-2 mb-2 hover:bg-blue-600"
+      >
+        Undo
+      </button>
+
       <div className="container" ref={wrapperRef}></div>
     </div>
   );
