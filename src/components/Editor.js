@@ -142,6 +142,90 @@ const Editor = ({ docId }) => {
     };
   }, []);
 
+  const cursorsRef = useRef({});
+  const [cursors, setCursors] = useState({});
+
+  function stringToColor(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const color = "#" + ((hash >> 24) & 0xff).toString(16).padStart(2, "0") +
+                  ((hash >> 16) & 0xff).toString(16).padStart(2, "0") +
+                  ((hash >> 8) & 0xff).toString(16).padStart(2, "0");
+    return color.slice(0, 7);
+  }  
+
+  useEffect(() => {
+    if (!quillRef.current || !socketRef.current) return;
+
+    const quill = quillRef.current;
+    const socket = socketRef.current;
+
+    socket.on("cursor-update", ({ username, range, socketId }) => {
+      if (!range || !quill || socketId === socket.id) return;
+
+      const cursorColor = stringToColor(username);
+      const cursorEl = document.createElement("span");
+      cursorEl.classList.add("custom-cursor");
+      cursorEl.style.borderLeft = `2px solid ${cursorColor}`;
+      cursorEl.style.height = "1em";
+      cursorEl.style.marginLeft = "-1px";
+      cursorEl.style.position = "absolute";
+      cursorEl.style.zIndex = "100";
+      cursorEl.title = username;
+
+      const cursorIndex = range.index;
+      const [leaf, offset] = quill.getLeaf(cursorIndex);
+      if (!leaf) return;
+
+      const leafDom = leaf.domNode;
+      const rect = leafDom.getBoundingClientRect();
+      const containerRect = quill.container.getBoundingClientRect();
+
+      cursorEl.style.top = `${rect.top - containerRect.top}px`;
+      cursorEl.style.left = `${rect.left - containerRect.left + offset}px`;
+
+      quill.container.appendChild(cursorEl);
+
+      // Clear old cursor if exists
+      if (cursorsRef.current[socketId]) {
+        cursorsRef.current[socketId].remove();
+      }
+
+      cursorsRef.current[socketId] = cursorEl;
+      setCursors({ ...cursorsRef.current });
+    });
+
+    return () => {
+      Object.values(cursorsRef.current).forEach((el) => el.remove());
+      socket.off("cursor-update");
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!quillRef.current || !socketRef.current) return;
+
+    const quill = quillRef.current;
+    const socket = socketRef.current;
+
+    const handleSelectionChange = (range, oldRange, source) => {
+      if (source !== "user" || !range) return;
+
+      socket.emit("cursor-position", {
+        docId,
+        username,
+        range,
+      });
+    };
+
+    quill.on("selection-change", handleSelectionChange);
+
+    return () => {
+      quill.off("selection-change", handleSelectionChange);
+    };
+  }, [isReady, username]);
+
   useEffect(() => {
     if (!socketRef.current || !quillRef.current) return;
 
@@ -165,7 +249,7 @@ const Editor = ({ docId }) => {
     } catch (error) {
       console.error("Undo failed:", error);
     }
-  };  
+  };
 
   const handleRoleChange = (targetUsername, newRole) => {
     socketRef.current.emit("change-role", {
