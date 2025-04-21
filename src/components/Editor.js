@@ -22,6 +22,9 @@ const Editor = ({ docId }) => {
   const socketRef = useRef();
   const quillRef = useRef();
   const [isReady, setIsReady] = useState(false);
+  const [comments, setComments] = useState([]);
+  const [selectionRange, setSelectionRange] = useState(null);
+  const [commentText, setCommentText] = useState("");
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [typingUser, setTypingUser] = useState(null);
   const [currentRole, setCurrentRole] = useState(
@@ -29,6 +32,45 @@ const Editor = ({ docId }) => {
   );
 
   const username = localStorage.getItem("username") || "Guest";
+
+  const handleAddComment = () => {
+    if (!selectionRange || !commentText.trim()) return;
+
+    const quill = quillRef.current;
+    const text = quill.getText(selectionRange.index, selectionRange.length);
+
+    const comment = {
+      id: Date.now(),
+      username,
+      text,
+      comment: commentText,
+      range: selectionRange,
+    };
+
+    setComments((prev) => [...prev, comment]);
+    setCommentText("");
+    setSelectionRange(null);
+
+    // Emit the comment to the server (optional, if you want to share comments with others)
+    socketRef.current.emit("add-comment", { docId, comment });
+  };
+
+  useEffect(() => {
+    if (!quillRef.current) return;
+    const quill = quillRef.current;
+
+    const handleSelectionChange = (range, oldRange, source) => {
+      const text = quill.getText(range?.index, range?.length);
+      if (range && range.length > 0 && text.trim() !== "") {
+        setSelectionRange(range);
+      } else {
+        setSelectionRange(null);
+      }
+    };
+
+    quill.on("selection-change", handleSelectionChange);
+    return () => quill.off("selection-change", handleSelectionChange);
+  }, []);
 
   useEffect(() => {
     socketRef.current = io("http://localhost:3001");
@@ -48,11 +90,9 @@ const Editor = ({ docId }) => {
       if (username === localUsername) {
         setCurrentRole(newRole);
         if (quillRef.current) {
-          if (newRole === "editor") {
-            quillRef.current.enable();
-          } else {
-            quillRef.current.disable();
-          }
+          newRole === "editor"
+            ? quillRef.current.enable()
+            : quillRef.current.disable();
         }
       }
     });
@@ -62,6 +102,20 @@ const Editor = ({ docId }) => {
       socket.off("update-users");
       socket.off("user-typing");
       socket.off("role-updated");
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!socketRef.current) return;
+
+    const socket = socketRef.current;
+
+    socket.on("new-comment", (comment) => {
+      setComments((prev) => [...prev, comment]);
+    });
+
+    return () => {
+      socket.off("new-comment");
     };
   }, []);
 
@@ -92,22 +146,15 @@ const Editor = ({ docId }) => {
 
     socketRef.current.once("load-document", ({ data, role }) => {
       quill.setContents(data);
-      if (role === "editor") {
-        quill.enable();
-      } else {
-        quill.disable();
-      }
+      role === "editor" ? quill.enable() : quill.disable();
       setIsReady(true);
     });
 
     return () => {
-      if (wrapper) {
-        wrapper.innerHTML = "";
-      }
+      wrapper.innerHTML = "";
     };
   }, [docId, currentRole]);
 
-  // Emit typing + text change
   useEffect(() => {
     if (!quillRef.current || !socketRef.current || !isReady) return;
 
@@ -150,17 +197,19 @@ const Editor = ({ docId }) => {
     for (let i = 0; i < str.length; i++) {
       hash = str.charCodeAt(i) + ((hash << 5) - hash);
     }
-    const color = "#" + ((hash >> 24) & 0xff).toString(16).padStart(2, "0") +
-                  ((hash >> 16) & 0xff).toString(16).padStart(2, "0") +
-                  ((hash >> 8) & 0xff).toString(16).padStart(2, "0");
+    const color =
+      "#" +
+      ((hash >> 24) & 0xff).toString(16).padStart(2, "0") +
+      ((hash >> 16) & 0xff).toString(16).padStart(2, "0") +
+      ((hash >> 8) & 0xff).toString(16).padStart(2, "0");
     return color.slice(0, 7);
-  }  
+  }
 
   useEffect(() => {
-    if (!quillRef.current || !socketRef.current) return;
+    if (!socketRef.current || !quillRef.current) return;
 
-    const quill = quillRef.current;
     const socket = socketRef.current;
+    const quill = quillRef.current;
 
     socket.on("cursor-update", ({ username, range, socketId }) => {
       if (!range || !quill || socketId === socket.id) return;
@@ -188,7 +237,6 @@ const Editor = ({ docId }) => {
 
       quill.container.appendChild(cursorEl);
 
-      // Clear old cursor if exists
       if (cursorsRef.current[socketId]) {
         cursorsRef.current[socketId].remove();
       }
@@ -260,35 +308,75 @@ const Editor = ({ docId }) => {
   };
 
   return (
-    <div>
-      <div className="p-2 text-sm text-gray-700">
-        <strong>Online:</strong> {onlineUsers.join(", ")}
-        {typingUser && (
-          <span className="ml-4 text-blue-500 italic">
-            {typingUser} is typing...
-          </span>
-        )}
-        <div className="mt-2">
-          <label className="mr-2 font-semibold">Change Role:</label>
-          <select
-            onChange={(e) =>
-              handleRoleChange(localStorage.getItem("username"), e.target.value)
-            }
-            value={currentRole}
-          >
-            <option value="viewer">Viewer</option>
-            <option value="editor">Editor</option>
-          </select>
+    <div className="flex h-screen overflow-hidden">
+      {/* Editor Area */}
+      <div className="flex-grow flex flex-col">
+        <div className="p-2 text-sm text-gray-700">
+          <strong>Online:</strong> {onlineUsers.join(", ")}
+          {typingUser && (
+            <span className="ml-4 text-blue-500 italic">
+              {typingUser} is typing...
+            </span>
+          )}
+          <div className="mt-2">
+            <label className="mr-2 font-semibold">Change Role:</label>
+            <select
+              onChange={(e) => handleRoleChange(username, e.target.value)}
+              value={currentRole}
+            >
+              <option value="viewer">Viewer</option>
+              <option value="editor">Editor</option>
+            </select>
+          </div>
         </div>
-      </div>
-      <button
-        onClick={handleUndo}
-        className="bg-blue-500 text-white px-3 py-1 rounded mt-2 mb-2 hover:bg-blue-600"
-      >
-        Undo
-      </button>
 
-      <div className="container" ref={wrapperRef}></div>
+        <button
+          onClick={handleUndo}
+          className="bg-blue-500 text-white px-3 py-1 rounded mt-2 mb-2 hover:bg-blue-600 ml-2 w-fit"
+        >
+          Undo
+        </button>
+
+        <div
+          className="flex-grow overflow-auto border m-2"
+          ref={wrapperRef}
+        ></div>
+      </div>
+
+      {/* Comment Sidebar */}
+      <div className="w-80 bg-gray-50 border-l border-gray-300 h-full overflow-y-auto p-4">
+        <h2 className="font-semibold mb-2">Comments</h2>
+
+        {comments.map((cmt) => (
+          <div key={cmt.id} className="mb-3 p-2 border rounded">
+            <div className="text-sm text-gray-600">
+              <strong>{cmt.username}</strong> commented:
+            </div>
+            <div className="text-sm italic bg-gray-100 p-1 mt-1">
+              {cmt.text}
+            </div>
+            <div className="text-sm mt-1">{cmt.comment}</div>
+          </div>
+        ))}
+
+        {selectionRange && (
+          <div className="mt-4">
+            <textarea
+              className="w-full p-2 border rounded"
+              rows="2"
+              value={commentText}
+              placeholder="Write a comment..."
+              onChange={(e) => setCommentText(e.target.value)}
+            />
+            <button
+              onClick={handleAddComment}
+              className="bg-blue-500 text-white px-3 py-1 mt-2 rounded hover:bg-blue-600"
+            >
+              Add Comment
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 };
